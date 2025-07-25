@@ -20,7 +20,7 @@ var (
 	mutex   sync.RWMutex
 	path    = "./config.json"
 	Default = AppConfig{
-		Port: ":443",
+		Port: ":8080",
 	}
 	Current = Default // This will be updated at load time
 )
