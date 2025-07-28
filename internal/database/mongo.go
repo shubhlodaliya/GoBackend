@@ -7,19 +7,22 @@ import (
 	"log"
 	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 var DB *mongo.Database
 
+var UserCollection *mongo.Collection
+var DeviceCollection *mongo.Collection
+
 func ConnectDB() {
-	clientOptions := options.Client().ApplyURI(config.Current.Database.Uri)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	client, err := mongo.Connect(ctx, clientOptions)
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(config.Current.Database.Uri))
 	if err != nil {
 		log.Fatal("❌ MongoDB connection error:", err)
 	}
@@ -30,9 +33,18 @@ func ConnectDB() {
 	}
 
 	DB = client.Database("iotdb")
-	fmt.Println("✅ Connected to MongoDB!")
-}
 
-func GetCollection(name string) *mongo.Collection {
-	return DB.Collection(name)
+	UserCollection = DB.Collection("users")
+	DeviceCollection = DB.Collection("devices")
+
+	// Ensure index on mobile number for uniqueness
+	_, err = UserCollection.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.M{"mobile": 1},
+		Options: options.Index().SetUnique(true),
+	})
+	if err != nil {
+		log.Fatalf("❌ Failed to create index: %v", err)
+	}
+
+	fmt.Println("✅ Connected to MongoDB!")
 }

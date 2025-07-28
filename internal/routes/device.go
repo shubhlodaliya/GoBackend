@@ -1,132 +1,115 @@
 package routes
 
 import (
+	"backend/internal/database"
+	"backend/internal/models"
 	"context"
-	"encoding/json"
 	"net/http"
 
-	"github.com/gorilla/mux"
+	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-func UpdateDeviceStatus(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
+// POST /device/status
+func UpdateDeviceStatus(c *gin.Context) {
 	var req struct {
 		DeviceID string `json:"device_id"`
 		Status   string `json:"status"` // "on" or "off"
 	}
 
-	// Validate input
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil || req.DeviceID == "" || (req.Status != "on" && req.Status != "off") {
-		http.Error(w, "Invalid input", http.StatusBadRequest)
+	if err := c.ShouldBindJSON(&req); err != nil || req.DeviceID == "" || (req.Status != "on" && req.Status != "off") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
 
-	// Update using custom device_id (not _id)
 	filter := bson.M{"device_id": req.DeviceID}
 	update := bson.M{"$set": bson.M{"status": req.Status}}
 
-	result, err := deviceCollection.UpdateOne(context.TODO(), filter, update)
+	result, err := database.DeviceCollection.UpdateOne(context.TODO(), filter, update)
 	if err != nil {
-		http.Error(w, "Update failed", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Update failed"})
 		return
 	}
 
 	if result.MatchedCount == 0 {
-		http.Error(w, "Device not found", http.StatusNotFound)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 		return
 	}
 
-	// Respond with success
-	json.NewEncoder(w).Encode(map[string]string{"message": "Status updated successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "Status updated successfully"})
 }
 
-func AddDevice(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
+// POST /device
+func AddDevice(c *gin.Context) {
 	var req struct {
 		UserID   string `json:"user_id"`
-		DeviceID string `json:"device_id"` // 👈 New field
+		DeviceID string `json:"device_id"`
 		Name     string `json:"name"`
 	}
 
-	// Validate input
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil || req.UserID == "" || req.DeviceID == "" || req.Name == "" {
-		http.Error(w, "Invalid input", http.StatusBadRequest)
+	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" || req.DeviceID == "" || req.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
 
 	userID, err := primitive.ObjectIDFromHex(req.UserID)
 	if err != nil {
-		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
 		return
 	}
 
-	// Prepare new device object
-	newDevice := Device{
+	newDevice := models.Device{
 		UserID:   userID,
-		DeviceID: req.DeviceID, // 👈 Set from request
+		DeviceID: req.DeviceID,
 		Name:     req.Name,
 		Type:     "static",
-		Status:   "off", // default
+		Status:   "off",
 	}
 
-	// Insert into DB
-	_, err = deviceCollection.InsertOne(context.TODO(), newDevice)
+	_, err = database.DeviceCollection.InsertOne(context.TODO(), newDevice)
 	if err != nil {
-		http.Error(w, "Failed to add device", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add device"})
 		return
 	}
 
-	// Fetch all devices for this user
-	cursor, err := deviceCollection.Find(context.TODO(), bson.M{"user_id": userID})
+	cursor, err := database.DeviceCollection.Find(context.TODO(), bson.M{"user_id": userID})
 	if err != nil {
-		http.Error(w, "Failed to fetch devices", http.StatusInternalServerError)
-		return
-	}
-
-	var devices []Device
-	if err = cursor.All(context.TODO(), &devices); err != nil {
-		http.Error(w, "Cursor decode error", http.StatusInternalServerError)
-		return
-	}
-
-	// Return device list
-	json.NewEncoder(w).Encode(devices)
-}
-
-func GetDevicesByUserID(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	userIDStr := mux.Vars(r)["user_id"]
-	userID, err := primitive.ObjectIDFromHex(userIDStr)
-	if err != nil {
-		http.Error(w, "Invalid user ID", http.StatusBadRequest)
-		return
-	}
-
-	// Find devices by user ID
-	filter := bson.M{"user_id": userID}
-	cursor, err := deviceCollection.Find(context.TODO(), filter)
-	if err != nil {
-		http.Error(w, "Failed to fetch devices", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch devices"})
 		return
 	}
 	defer cursor.Close(context.TODO())
 
-	var devices []Device
-	for cursor.Next(context.TODO()) {
-		var device Device
-		if err := cursor.Decode(&device); err != nil {
-			http.Error(w, "Decode error", http.StatusInternalServerError)
-			return
-		}
-		devices = append(devices, device)
+	var devices []models.Device
+	if err := cursor.All(context.TODO(), &devices); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Cursor decode error"})
+		return
 	}
 
-	json.NewEncoder(w).Encode(devices)
+	c.JSON(http.StatusOK, devices)
+}
+
+// GET /devices/:user_id
+func GetDevicesByUserID(c *gin.Context) {
+	userIDStr := c.Param("user_id")
+	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	cursor, err := database.DeviceCollection.Find(context.TODO(), bson.M{"user_id": userID})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch devices"})
+		return
+	}
+	defer cursor.Close(context.TODO())
+
+	var devices []models.Device
+	if err := cursor.All(context.TODO(), &devices); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Decode error"})
+		return
+	}
+
+	c.JSON(http.StatusOK, devices)
 }

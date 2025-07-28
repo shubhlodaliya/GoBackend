@@ -1,6 +1,6 @@
 {
   "port": ":8080",
   "database": {
-    "uri": "mongodb+srv://farmerIOT:FarmerIOT@cluster0.phbob3u.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+    "uri": "mongodb+srv://iot-farmer:iot-farmer123@iot-farmer.gwy73os.mongodb.net/?retryWrites=true&w=majority&appName=iot-farmer"
   }
 }

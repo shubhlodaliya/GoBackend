@@ -1,69 +1,69 @@
 package routes
 
 import (
+	"backend/internal/database"
+	"backend/internal/models"
 	"context"
-	"encoding/json"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-func AuthHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
+// POST /auth
+func AuthHandler(c *gin.Context) {
 	var req struct {
 		Mobile string `json:"mobile"`
 		Token  string `json:"token"`
 	}
-	// Decode request body
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil || req.Mobile == "" || req.Token == "" {
-		http.Error(w, "Invalid input", http.StatusBadRequest)
+
+	if err := c.ShouldBindJSON(&req); err != nil || req.Mobile == "" || req.Token == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
 
-	// Try to find the user by mobile
 	filter := bson.M{"mobile": req.Mobile}
-	var user User
-	err = userCollection.FindOne(context.TODO(), filter).Decode(&user)
+	var user models.User
+	err := database.UserCollection.FindOne(context.TODO(), filter).Decode(&user)
 
 	if err == mongo.ErrNoDocuments {
-		// 🔵 New user: insert
-		user = User{
+		// New user: insert
+		user = models.User{
 			Mobile: req.Mobile,
 			Token:  req.Token,
 		}
-		result, err := userCollection.InsertOne(context.TODO(), user)
+		result, err := database.UserCollection.InsertOne(context.TODO(), user)
 		if err != nil {
-			http.Error(w, "User creation failed", http.StatusInternalServerError)
-			return
-		}
-		user.ID = result.InsertedID.(primitive.ObjectID)
-	} else if err == nil {
-		// 🟠 Existing user: update token
-		update := bson.M{"$set": bson.M{"token": req.Token}}
-		_, err := userCollection.UpdateOne(context.TODO(), filter, update)
-		if err != nil {
-			http.Error(w, "Token update failed", http.StatusInternalServerError)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "User creation failed"})
 			return
 		}
 
-		// ⚠️ Fetch updated user
-		err = userCollection.FindOne(context.TODO(), filter).Decode(&user)
+		if oid, ok := result.InsertedID.(primitive.ObjectID); ok {
+			user.ID = oid
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse inserted ID"})
+			return
+		}
+	} else if err == nil {
+		// Existing user: update token
+		update := bson.M{"$set": bson.M{"token": req.Token}}
+		_, err := database.UserCollection.UpdateOne(context.TODO(), filter, update)
 		if err != nil {
-			http.Error(w, "Fetch after update failed", http.StatusInternalServerError)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Token update failed"})
+			return
+		}
+
+		err = database.UserCollection.FindOne(context.TODO(), filter).Decode(&user)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Fetch after update failed"})
 			return
 		}
 	} else {
-		// 🔴 Unexpected error
-		http.Error(w, "Database error", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
 
-	// ✅ Return user ID
-	json.NewEncoder(w).Encode(map[string]string{
-		"user_id": user.ID.Hex(),
-	})
+	c.JSON(http.StatusOK, gin.H{"user_id": user.ID.Hex()})
 }
